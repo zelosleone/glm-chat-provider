@@ -1,0 +1,63 @@
+{
+	"name": "glm-chat-provider",
+	"displayName": "GLM Chat Provider",
+	"description": "Z.ai GLM models as VS Code Language Model Chat Provider",
+	"version": "0.1.0",
+	"publisher": "DenizhanDaklr",
+	"license": "MIT",
+	"icon": "images/icon.png",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/zelosleone/glm-chat-provider"
+	},
+	"engines": {
+		"vscode": "1.108.1"
+	},
+	"categories": [
+		"AI",
+		"Chat"
+	],
+	"keywords": [
+		"glm",
+		"z.ai",
+		"ai",
+		"chat",
+		"copilot"
+	],
+	"main": "./out/extension.js",
+	"contributes": {
+		"languageModelChatProviders": [
+			{
+				"vendor": "zai",
+				"displayName": "Z.AI GLM",
+				"managementCommand": "glm-chat-provider.manage"
+			}
+		],
+		"commands": [
+			{
+				"command": "glm-chat-provider.setApiKey",
+				"title": "GLM: Set API Key"
+			},
+			{
+				"command": "glm-chat-provider.clearApiKey",
+				"title": "GLM: Clear API Key"
+			},
+			{
+				"command": "glm-chat-provider.manage",
+				"title": "GLM: Manage Provider"
+			}
+		]
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -p ./",
+		"watch": "tsc -watch -p ./",
+		"lint": "eslint src"
+	},
+	"devDependencies": {
+		"@types/node": "20.19.29",
+		"@types/vscode": "1.108.1",
+		"eslint": "9.39.2",
+		"typescript": "5.9.3"
+	}
+}

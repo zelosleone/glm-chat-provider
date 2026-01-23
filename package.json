@@ -2,7 +2,7 @@
 	"name": "glm-chat-provider",
 	"displayName": "GLM Chat Provider",
 	"description": "Z.ai GLM models as VS Code Language Model Chat Provider",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"publisher": "DenizhanDaklr",
 	"license": "MIT",
 	"icon": "images/icon.png",
@@ -11,7 +11,7 @@
 		"url": "https://github.com/zelosleone/glm-chat-provider"
 	},
 	"engines": {
-		"vscode": "1.108.1"
+		"vscode": "^1.108.0"
 	},
 	"categories": [
 		"AI",

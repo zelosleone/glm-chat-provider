@@ -1,227 +1,242 @@
-import type * as vscode from "vscode";
+import type * as vscode from 'vscode';
+import OpenAI from 'openai';
+import {match} from 'ts-pattern';
+import type {
+  ChatCompletionChunk,
+  ChatCompletionCreateParamsNonStreaming,
+  ChatCompletionCreateParamsStreaming,
+  ChatCompletionMessageParam,
+  ChatCompletionTool,
+} from 'openai/resources/chat/completions/completions';
 
-const BASE_URL = "https://api.z.ai/api/coding/paas/v4";
-const CHAT_ENDPOINT = "/chat/completions";
+const BASE_URL = 'https://api.z.ai/api/coding/paas/v4';
 
 export interface GlmMessage {
-	role: "system" | "user" | "assistant" | "tool";
-	content: string;
-	name?: string;
-	tool_calls?: GlmToolCall[];
-	tool_call_id?: string;
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  name?: string;
+  tool_calls?: GlmToolCall[];
+  tool_call_id?: string;
 }
 
 export interface GlmToolCall {
-	id: string;
-	type: "function";
-	function: {
-		name: string;
-		arguments: string;
-	};
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
 }
 
 export interface GlmTool {
-	type: "function";
-	function: {
-		name: string;
-		description: string;
-		parameters: Record<string, unknown>;
-	};
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
 }
 
 export interface ChatOptions {
-	temperature?: number;
-	topP?: number;
-	maxTokens?: number;
-	tools?: GlmTool[];
-	stop?: string[];
-}
-
-export interface GlmStreamChunk {
-	id: string;
-	created: number;
-	model: string;
-	choices: Array<{
-		index: number;
-		delta: {
-			role?: string;
-			content?: string;
-			tool_calls?: Array<{
-				index: number;
-				id?: string;
-				type?: string;
-				function?: {
-					name?: string;
-					arguments?: string;
-				};
-			}>;
-		};
-		finish_reason: string | null;
-	}>;
-}
-
-export interface GlmResponse {
-	id: string;
-	created: number;
-	model: string;
-	choices: Array<{
-		index: number;
-		message: {
-			role: string;
-			content: string;
-			tool_calls?: GlmToolCall[];
-		};
-		finish_reason: string;
-	}>;
-	usage: {
-		prompt_tokens: number;
-		completion_tokens: number;
-		total_tokens: number;
-	};
+  temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+  tools?: GlmTool[];
+  stop?: string[];
 }
 
 export class GlmApiError extends Error {
-	constructor(
-		message: string,
-		public readonly statusCode: number,
-		public readonly response?: unknown,
-	) {
-		super(message);
-		this.name = "GlmApiError";
-	}
+  constructor(
+    message: string,
+    public readonly statusCode: number,
+    public readonly response?: unknown,
+  ) {
+    super(message);
+    this.name = 'GlmApiError';
+  }
 }
 
 export class GlmApiClient {
-	constructor(private readonly apiKey: string) {}
+  private readonly client: OpenAI;
 
-	async *streamChat(
-		model: string,
-		messages: GlmMessage[],
-		options?: ChatOptions,
-		cancellationToken?: vscode.CancellationToken,
-	): AsyncGenerator<GlmStreamChunk> {
-		const body = {
-			model,
-			messages,
-			stream: true,
-			temperature: options?.temperature ?? 0.7,
-			top_p: options?.topP,
-			max_tokens: options?.maxTokens,
-			tools: options?.tools,
-			stop: options?.stop,
-		};
+  constructor(apiKey: string) {
+    this.client = new OpenAI({
+      apiKey,
+      baseURL: BASE_URL,
+    });
+  }
 
-		// Remove undefined values
-		const cleanBody = JSON.parse(JSON.stringify(body));
+  private toOpenAiMessages(
+    messages: GlmMessage[],
+  ): ChatCompletionMessageParam[] {
+    return messages.map(message =>
+      match(message.role)
+        .with('tool', () => ({
+          role: 'tool' as const,
+          content: message.content,
+          tool_call_id: message.tool_call_id ?? '',
+        }))
+        .with('assistant', () =>
+          message.tool_calls?.length
+            ? {
+                role: 'assistant' as const,
+                content: message.content,
+                tool_calls: message.tool_calls.map(call => ({
+                  id: call.id,
+                  type: 'function' as const,
+                  function: {
+                    name: call.function.name,
+                    arguments: call.function.arguments,
+                  },
+                })),
+              }
+            : {
+                role: 'assistant' as const,
+                content: message.content,
+              },
+        )
+        .with('system', () => ({
+          role: 'system' as const,
+          content: message.content,
+        }))
+        .otherwise(() => ({
+          role: 'user' as const,
+          content: message.content,
+        })),
+    );
+  }
 
-		const response = await fetch(`${BASE_URL}${CHAT_ENDPOINT}`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${this.apiKey}`,
-			},
-			body: JSON.stringify(cleanBody),
-		});
+  private toOpenAiTools(tools?: GlmTool[]): ChatCompletionTool[] | undefined {
+    if (!tools?.length) {
+      return undefined;
+    }
 
-		if (!response.ok) {
-			const errorText = await response.text();
-			let errorJson: unknown;
-			try {
-				errorJson = JSON.parse(errorText);
-			} catch {
-				errorJson = errorText;
-			}
-			throw new GlmApiError(
-				`GLM API error: ${response.status} ${response.statusText}`,
-				response.status,
-				errorJson,
-			);
-		}
+    return tools.map(tool => ({
+      type: 'function',
+      function: {
+        name: tool.function.name,
+        description: tool.function.description,
+        parameters: tool.function.parameters,
+      },
+    }));
+  }
 
-		if (!response.body) {
-			throw new GlmApiError("No response body", 0);
-		}
+  private applyOptionalParams(
+    params:
+      | ChatCompletionCreateParamsStreaming
+      | ChatCompletionCreateParamsNonStreaming,
+    options?: ChatOptions,
+  ): void {
+    if (options?.topP !== undefined) {
+      params.top_p = options.topP;
+    }
+    if (options?.maxTokens !== undefined) {
+      params.max_tokens = options.maxTokens;
+    }
+    if (options?.stop?.length) {
+      params.stop = options.stop;
+    }
 
-		const reader = response.body.getReader();
-		const decoder = new TextDecoder();
-		let buffer = "";
+    const tools = this.toOpenAiTools(options?.tools);
+    if (tools) {
+      params.tools = tools;
+    }
+  }
 
-		try {
-			while (true) {
-				if (cancellationToken?.isCancellationRequested) {
-					reader.cancel();
-					break;
-				}
+  private buildStreamingParams(
+    model: string,
+    messages: GlmMessage[],
+    options?: ChatOptions,
+  ): ChatCompletionCreateParamsStreaming {
+    const params: ChatCompletionCreateParamsStreaming = {
+      model,
+      messages: this.toOpenAiMessages(messages),
+      stream: true,
+      temperature: options?.temperature ?? 0.7,
+    };
+    this.applyOptionalParams(params, options);
+    return params;
+  }
 
-				const { done, value } = await reader.read();
-				if (done) break;
+  private buildNonStreamingParams(
+    model: string,
+    messages: GlmMessage[],
+    options?: ChatOptions,
+  ): ChatCompletionCreateParamsNonStreaming {
+    const params: ChatCompletionCreateParamsNonStreaming = {
+      model,
+      messages: this.toOpenAiMessages(messages),
+      stream: false,
+      temperature: options?.temperature ?? 0.7,
+    };
+    this.applyOptionalParams(params, options);
+    return params;
+  }
 
-				buffer += decoder.decode(value, { stream: true });
-				const lines = buffer.split("\n");
-				buffer = lines.pop() || "";
+  private toGlmApiError(error: unknown): GlmApiError {
+    return match(error)
+      .when(
+        (value): value is InstanceType<typeof OpenAI.APIError> =>
+          value instanceof OpenAI.APIError,
+        value =>
+          new GlmApiError(
+            `GLM API error: ${value.status} ${value.message}`,
+            value.status ?? 0,
+            value.error,
+          ),
+      )
+      .when(
+        (value): value is Error => value instanceof Error,
+        value => new GlmApiError(`GLM API error: ${value.message}`, 0),
+      )
+      .otherwise(
+        value => new GlmApiError(`GLM API error: ${String(value)}`, 0),
+      );
+  }
 
-				for (const line of lines) {
-					const trimmed = line.trim();
-					if (!trimmed || !trimmed.startsWith("data:")) continue;
+  async *streamChat(
+    model: string,
+    messages: GlmMessage[],
+    options?: ChatOptions,
+    cancellationToken?: vscode.CancellationToken,
+  ): AsyncGenerator<ChatCompletionChunk> {
+    const abortController = new AbortController();
+    const cancellationDisposable = cancellationToken?.onCancellationRequested(
+      () => abortController.abort(),
+    );
 
-					const data = trimmed.slice(5).trim();
-					if (data === "[DONE]") return;
+    try {
+      const stream = (await this.client.chat.completions.create(
+        this.buildStreamingParams(model, messages, options),
+        {
+          signal: abortController.signal,
+        },
+      )) as AsyncIterable<ChatCompletionChunk>;
 
-					try {
-						const chunk = JSON.parse(data) as GlmStreamChunk;
-						yield chunk;
-					} catch {
-						// Skip malformed JSON
-					}
-				}
-			}
-		} finally {
-			reader.releaseLock();
-		}
-	}
+      for await (const chunk of stream) {
+        if (cancellationToken?.isCancellationRequested) {
+          return;
+        }
+        yield chunk;
+      }
+    } catch (error) {
+      throw this.toGlmApiError(error);
+    } finally {
+      cancellationDisposable?.dispose();
+    }
+  }
 
-	async chat(
-		model: string,
-		messages: GlmMessage[],
-		options?: ChatOptions,
-	): Promise<GlmResponse> {
-		const body = {
-			model,
-			messages,
-			stream: false,
-			temperature: options?.temperature ?? 0.7,
-			top_p: options?.topP,
-			max_tokens: options?.maxTokens,
-			tools: options?.tools,
-			stop: options?.stop,
-		};
-
-		const cleanBody = JSON.parse(JSON.stringify(body));
-
-		const response = await fetch(`${BASE_URL}${CHAT_ENDPOINT}`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${this.apiKey}`,
-			},
-			body: JSON.stringify(cleanBody),
-		});
-
-		if (!response.ok) {
-			const errorText = await response.text();
-			let errorJson: unknown;
-			try {
-				errorJson = JSON.parse(errorText);
-			} catch {
-				errorJson = errorText;
-			}
-			throw new GlmApiError(
-				`GLM API error: ${response.status} ${response.statusText}`,
-				response.status,
-				errorJson,
-			);
-		}
-
-		return response.json() as Promise<GlmResponse>;
-	}
+  async chat(
+    model: string,
+    messages: GlmMessage[],
+    options?: ChatOptions,
+  ): Promise<void> {
+    try {
+      await this.client.chat.completions.create(
+        this.buildNonStreamingParams(model, messages, options),
+      );
+    } catch (error) {
+      throw this.toGlmApiError(error);
+    }
+  }
 }

@@ -1,17 +1,15 @@
 {
-	"compilerOptions": {
-		"module": "Node16",
-		"target": "ES2024",
-		"lib": ["ES2024"],
-		"outDir": "out",
-		"rootDir": "src",
-		"strict": true,
-		"esModuleInterop": true,
-		"skipLibCheck": true,
-		"forceConsistentCasingInFileNames": true,
-		"declaration": true,
-		"sourceMap": true
-	},
-	"include": ["src/**/*"],
-	"exclude": ["node_modules", "out"]
+  "extends": "./node_modules/gts/tsconfig-google.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "out"
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "out",
+    "build"
+  ]
 }

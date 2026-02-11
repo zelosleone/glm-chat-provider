@@ -1,63 +1,90 @@
 {
-	"name": "glm-chat-provider",
-	"displayName": "GLM Chat Provider",
-	"description": "Z.ai GLM models as VS Code Language Model Chat Provider",
-	"version": "0.2.0",
-	"publisher": "DenizhanDaklr",
-	"license": "MIT",
-	"icon": "images/icon.png",
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/zelosleone/glm-chat-provider"
-	},
-	"engines": {
-		"vscode": "^1.108.0"
-	},
-	"categories": [
-		"AI",
-		"Chat"
-	],
-	"keywords": [
-		"glm",
-		"z.ai",
-		"ai",
-		"chat",
-		"copilot"
-	],
-	"main": "./out/extension.js",
-	"contributes": {
-		"languageModelChatProviders": [
-			{
-				"vendor": "zai",
-				"displayName": "Z.AI GLM",
-				"managementCommand": "glm-chat-provider.manage"
-			}
-		],
-		"commands": [
-			{
-				"command": "glm-chat-provider.setApiKey",
-				"title": "GLM: Set API Key"
-			},
-			{
-				"command": "glm-chat-provider.clearApiKey",
-				"title": "GLM: Clear API Key"
-			},
-			{
-				"command": "glm-chat-provider.manage",
-				"title": "GLM: Manage Provider"
-			}
-		]
-	},
-	"scripts": {
-		"vscode:prepublish": "npm run compile",
-		"compile": "tsc -p ./",
-		"watch": "tsc -watch -p ./",
-		"lint": "eslint src"
-	},
-	"devDependencies": {
-		"@types/node": "20.19.29",
-		"@types/vscode": "1.108.1",
-		"eslint": "9.39.2",
-		"typescript": "5.9.3"
-	}
+  "name": "glm-chat-provider",
+  "displayName": "GLM Chat Provider",
+  "description": "Z.AI GLM models as VS Code Language Model Chat Provider",
+  "version": "0.3.0",
+  "publisher": "DenizhanDaklr",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelosleone/glm-chat-provider"
+  },
+  "engines": {
+    "vscode": "^1.108.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "keywords": [
+    "glm",
+    "Z.AI",
+    "ai",
+    "chat",
+    "copilot"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "zai",
+        "displayName": "Z.AI GLM",
+        "configuration": {
+          "properties": {
+            "apiKey": {
+              "type": "string",
+              "secret": true,
+              "title": "API Key",
+              "description": "API key for Z.AI GLM"
+            }
+          },
+          "required": [
+            "apiKey"
+          ]
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "glm-chat-provider.setApiKey",
+        "title": "GLM: Set API Key"
+      },
+      {
+        "command": "glm-chat-provider.clearApiKey",
+        "title": "GLM: Clear API Key"
+      },
+      {
+        "command": "glm-chat-provider.manage",
+        "title": "GLM: Manage Provider"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "build": "npm run compile",
+    "compile": "tsc",
+    "watch": "tsc -watch -p ./",
+    "lint": "gts lint",
+    "clean": "gts clean",
+    "fix": "gts fix",
+    "prepare": "npm.cmd run compile",
+    "pretest": "npm.cmd run compile",
+    "posttest": "npm.cmd run lint"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "@types/vscode": "1.108.1",
+    "eslint": "9.39.2",
+    "gts": "^7.0.0",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "openai": "^6.21.0",
+    "secure-json-parse": "^4.1.0",
+    "ts-pattern": "^5.9.0"
+  }
 }

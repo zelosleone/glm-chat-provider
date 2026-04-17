@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import secureJsonParse from "secure-json-parse";
 import { P, match } from "ts-pattern";
 import { GlmApiClient, GlmApiError, type GlmMessage, type GlmTool, type GlmToolCall } from "./api";
+import { resolveGlmModels } from "./models";
 import type { ChatCompletionChunk } from "openai/resources/chat/completions/completions";
 import type { AuthManager } from "./auth";
 
@@ -39,86 +40,6 @@ const THINK_OPEN = "<think>";
 const THINK_CLOSE = "</think>";
 const THINK_OPEN_MARKDOWN = "<details><summary>Thinking</summary>\n\n";
 const THINK_CLOSE_MARKDOWN = "\n\n</details>\n\n";
-
-const GLM_MODELS: vscode.LanguageModelChatInformation[] = [
-  {
-    id: "glm-5",
-    name: "GLM-5",
-    family: "glm",
-    version: "5",
-    tooltip: "Z.AI",
-    detail: "Z.AI",
-    maxInputTokens: 200000,
-    maxOutputTokens: 131072,
-    capabilities: { imageInput: true, toolCalling: true },
-  },
-  {
-    id: "glm-5-code",
-    name: "GLM-5-Code",
-    family: "glm",
-    version: "5-code",
-    tooltip: "Z.AI",
-    detail: "Z.AI",
-    maxInputTokens: 200000,
-    maxOutputTokens: 131072,
-    capabilities: { imageInput: true, toolCalling: true },
-  },
-  {
-    id: "glm-4.7",
-    name: "GLM-4.7",
-    family: "glm",
-    version: "4.7",
-    tooltip: "Z.AI",
-    detail: "Z.AI",
-    maxInputTokens: 200000,
-    maxOutputTokens: 131072,
-    capabilities: { imageInput: false, toolCalling: true },
-  },
-  {
-    id: "glm-4.7-flash",
-    name: "GLM-4.7 Flash",
-    family: "glm",
-    version: "4.7-flash",
-    tooltip: "Z.AI",
-    detail: "Z.AI",
-    maxInputTokens: 200000,
-    maxOutputTokens: 131072,
-    capabilities: { imageInput: false, toolCalling: true },
-  },
-  {
-    id: "glm-4.6",
-    name: "GLM-4.6",
-    family: "glm",
-    version: "4.6",
-    tooltip: "Z.AI",
-    detail: "Z.AI",
-    maxInputTokens: 200000,
-    maxOutputTokens: 131072,
-    capabilities: { imageInput: false, toolCalling: true },
-  },
-  {
-    id: "glm-4.5",
-    name: "GLM-4.5",
-    family: "glm",
-    version: "4.5",
-    tooltip: "Z.AI",
-    detail: "Z.AI",
-    maxInputTokens: 131072,
-    maxOutputTokens: 98304,
-    capabilities: { imageInput: false, toolCalling: true },
-  },
-  {
-    id: "glm-4.5-air",
-    name: "GLM-4.5 Air",
-    family: "glm",
-    version: "4.5-air",
-    tooltip: "Z.AI",
-    detail: "Z.AI",
-    maxInputTokens: 131072,
-    maxOutputTokens: 98304,
-    capabilities: { imageInput: false, toolCalling: true },
-  },
-];
 
 function getPartialSuffixLength(buffer: string, marker: string): number {
   for (let i = Math.min(buffer.length, marker.length - 1); i > 0; i--) {
@@ -492,7 +413,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   }
 
   private modelsWithApiKey(apiKey: string): vscode.LanguageModelChatInformation[] {
-    return GLM_MODELS.map((model) => ({
+    return resolveGlmModels().map((model) => ({
       ...model,
       __glmApiKey: apiKey,
     }));

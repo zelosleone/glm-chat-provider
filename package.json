@@ -61,7 +61,66 @@
         "command": "glm-chat-provider.manage",
         "title": "GLM: Manage Provider"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "GLM Chat Provider",
+      "properties": {
+        "glm-chat-provider.customModels": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Additional GLM models to expose in the chat model picker. Each entry requires `id` (sent to the Z.AI API as the model name) and optionally accepts `name`, `family`, `version`, `tooltip`, `detail`, `maxInputTokens`, `maxOutputTokens`, `imageInput`, and `toolCalling`. An entry whose `id` matches a built-in model overrides the built-in.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Model id sent to the Z.AI API (e.g. \"glm-5.1\")."
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name shown in the model picker. Defaults to id."
+              },
+              "family": {
+                "type": "string",
+                "default": "glm"
+              },
+              "version": {
+                "type": "string",
+                "description": "Version label (defaults to id)."
+              },
+              "tooltip": {
+                "type": "string",
+                "default": "Z.AI"
+              },
+              "detail": {
+                "type": "string",
+                "default": "Z.AI"
+              },
+              "maxInputTokens": {
+                "type": "number",
+                "default": 200000
+              },
+              "maxOutputTokens": {
+                "type": "number",
+                "default": 131072
+              },
+              "imageInput": {
+                "type": "boolean",
+                "default": false
+              },
+              "toolCalling": {
+                "type": "boolean",
+                "default": true
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

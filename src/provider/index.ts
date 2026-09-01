@@ -17,7 +17,7 @@ import {
 } from '../models';
 export { GLM_MODELS };
 import { createThinkingPart } from './thinking';
-import { convertMessages, convertTools, parseToolArguments, type ToolCallBuilder } from './convert';
+import { convertMessages, convertTools, containsImageInput, parseToolArguments, type ToolCallBuilder } from './convert';
 import { getConfiguredTemperature } from './temperature';
 
 type ModelWithApiKey = vscode.LanguageModelChatInformation & {
@@ -125,6 +125,24 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     if (!apiKey) {
       throw new Error(
         'API key not configured. Use "GLM: Set API Key" command.',
+      );
+    }
+
+    // Reject image attachments early with an actionable message instead of
+    // letting the API fail with an opaque error on text-only models.
+    const modelDefinition = GLM_MODEL_DEFINITIONS.find(m => m.id === model.id);
+    if (
+      modelDefinition &&
+      !modelDefinition.capabilities.imageInput &&
+      containsImageInput(messages)
+    ) {
+      const visionModels = GLM_MODEL_DEFINITIONS.filter(
+        m => m.capabilities.imageInput,
+      )
+        .map(m => m.name)
+        .join(', ');
+      throw new Error(
+        `${modelDefinition.name} does not support image input. The conversation contains image attachments — switch to a vision model (${visionModels}) or remove the images.`,
       );
     }
 

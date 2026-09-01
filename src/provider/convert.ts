@@ -36,6 +36,23 @@ export function convertMessages(
   return messages.map(message => toGlmMessage(message));
 }
 
+/**
+ * True when any message carries an image DataPart — i.e. the converted
+ * payload would contain `image_url` content parts the API would reject
+ * on text-only models.
+ */
+export function containsImageInput(
+  messages: readonly vscode.LanguageModelChatRequestMessage[],
+): boolean {
+  return messages.some(message =>
+    message.content.some(
+      part =>
+        part instanceof vscode.LanguageModelDataPart &&
+        part.mimeType.startsWith('image/'),
+    ),
+  );
+}
+
 function toGlmMessage(
   message: vscode.LanguageModelChatRequestMessage,
 ): GlmMessage {

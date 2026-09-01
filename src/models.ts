@@ -1,9 +1,10 @@
 import type * as vscode from 'vscode';
 
-export type TemperaturePreset = 'balanced' | 'precise' | 'creative' | 'max';
-export type ThinkingMode = 'auto' | 'enabled' | 'disabled' | 'high' | 'max';
+export type TemperaturePreset = 'recommended' | 'balanced' | 'precise' | 'creative' | 'max';
+export type ThinkingMode = 'auto' | 'enabled' | 'disabled' | 'low' | 'high' | 'max';
 
 export const TEMPERATURE_PRESET_VALUES: Record<TemperaturePreset, number> = {
+  recommended: 1.0,
   balanced: 0.7,
   precise: 0.2,
   creative: 0.9,
@@ -62,16 +63,24 @@ function buildModelConfigurationSchema(thinkingSupport?: ThinkingSupport) {
         temperature: {
           type: 'string',
           title: 'Temperature',
-          enum: ['balanced', 'precise', 'creative', 'max', 'custom'],
-          enumItemLabels: ['Balanced', 'Precise', 'Creative', 'Max', 'Custom'],
+          enum: ['recommended', 'balanced', 'precise', 'creative', 'max', 'custom'],
+          enumItemLabels: [
+            'Recommended (1.0)',
+            'Balanced',
+            'Precise',
+            'Creative',
+            'Max',
+            'Custom',
+          ],
           enumDescriptions: [
+            'Z.AI-recommended for this model (1.0)',
             'Standard (0.7)',
             'Low, good for code (0.2)',
             'Higher, good for writing (0.9)',
             'Highest (1.0)',
             'Custom value set in settings',
           ],
-          default: 'balanced',
+          default: 'recommended',
           description: 'Presets (range: 0.0 – 1.0)',
           group: 'navigation',
         },
@@ -193,6 +202,12 @@ export interface GlmModelDefinition {
    *  'on-off-effort': thinking can be enabled/disabled, with multiple effort levels (high/max).
    *  'always-on-effort': thinking cannot be disabled; effort levels low/high/max (GLM-5.3+). */
   thinkingSupport: ThinkingSupport;
+  /** Z.AI-recommended default temperature for this model, sent when the user
+   *  has not picked a preset in the picker or settings (e.g. 1.0 for GLM-5.3). */
+  readonly recommendedTemperature?: number;
+  /** Model accepts `tool_stream: true` so tool calls stream progressively
+   *  instead of arriving in one block at the end of the response. */
+  readonly supportsToolStream?: boolean;
 }
 
 export const GLM_MODEL_DEFINITIONS: readonly GlmModelDefinition[] = [
@@ -206,6 +221,8 @@ export const GLM_MODEL_DEFINITIONS: readonly GlmModelDefinition[] = [
     maxOutputTokens: 131072,
     capabilities: {imageInput: false, toolCalling: true, thinking: true},
     thinkingSupport: 'always-on-effort',
+    recommendedTemperature: 1.0,
+    supportsToolStream: true,
   },
   {
     id: 'glm-5.3-flash',
@@ -217,6 +234,8 @@ export const GLM_MODEL_DEFINITIONS: readonly GlmModelDefinition[] = [
     maxOutputTokens: 131072,
     capabilities: {imageInput: true, toolCalling: true, thinking: true},
     thinkingSupport: 'always-on-effort',
+    recommendedTemperature: 1.0,
+    supportsToolStream: true,
   },
   {
     id: 'glm-5.2',

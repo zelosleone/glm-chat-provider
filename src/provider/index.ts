@@ -235,7 +235,10 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     const toolCallBuilders = new Map<number, ToolCallBuilder>();
 
     const modelConfig = options as ModelConfigurationOptions;
-    const temperature = getConfiguredTemperature(modelConfig);
+    const modelDefinition = GLM_MODEL_DEFINITIONS.find(m => m.id === model.id);
+    const temperature =
+      getConfiguredTemperature(modelConfig) ??
+      modelDefinition?.recommendedTemperature;
     const {thinking, reasoningEffort} = this.resolveThinking(model.id, modelConfig);
 
     const stream = client.streamChat(
@@ -247,6 +250,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
         temperature,
         thinking,
         reasoningEffort,
+        toolStream: modelDefinition?.supportsToolStream ?? false,
         onUsage: this.onUsage,
       },
       token,

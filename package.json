@@ -2,7 +2,7 @@
   "name": "glm-chat-provider",
   "displayName": "GLM Chat Provider",
   "description": "Z.AI GLM models as VS Code Language Model Chat Provider",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "publisher": "DenizhanDaklr",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -62,11 +62,17 @@
           "enum": [
             "auto",
             "enabled",
+            "low",
+            "high",
+            "max",
             "disabled"
           ],
           "enumDescriptions": [
             "Let the model decide when to think (default behavior)",
             "Always enable thinking mode",
+            "Thinking enabled, low effort — fastest (GLM-5.3+)",
+            "Thinking enabled, high effort (GLM-5.2+)",
+            "Thinking enabled, max effort — deep reasoning (GLM-5.2+)",
             "Always disable thinking mode"
           ],
           "description": "Default thinking mode for GLM models that support it (GLM-4.5+)"

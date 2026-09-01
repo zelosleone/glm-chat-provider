@@ -150,13 +150,20 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     const canDisable =
       def?.thinkingSupport === 'on-off' ||
       def?.thinkingSupport === 'on-off-effort';
-    const hasEffort = def?.thinkingSupport === 'on-off-effort';
+    const hasEffort =
+      def?.thinkingSupport === 'on-off-effort' ||
+      def?.thinkingSupport === 'always-on-effort';
+    // GLM-5.3+: reasoning cannot be disabled; only the effort level is configurable.
+    const alwaysOn = def?.thinkingSupport === 'always-on-effort';
 
     if (options) {
       const configuredMode =
         options.modelConfiguration?.thinkingMode ?? options.configuration?.thinkingMode;
 
       if (hasEffort) {
+        if (configuredMode === 'low') {
+          return {thinking: {type: 'enabled'}, reasoningEffort: 'low'};
+        }
         if (configuredMode === 'high') {
           return {thinking: {type: 'enabled'}, reasoningEffort: 'high'};
         }
@@ -164,7 +171,9 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
           return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
         }
         if (configuredMode === 'disabled') {
-          return {thinking: {type: 'disabled'}};
+          return alwaysOn
+            ? {thinking: {type: 'enabled'}, reasoningEffort: 'low'}
+            : {thinking: {type: 'disabled'}};
         }
       } else {
         if (configuredMode === 'enabled') {
@@ -184,6 +193,9 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       .get<string>('defaultThinkingMode', 'auto');
 
     if (hasEffort) {
+      if (config === 'low') {
+        return {thinking: {type: 'enabled'}, reasoningEffort: 'low'};
+      }
       if (config === 'high') {
         return {thinking: {type: 'enabled'}, reasoningEffort: 'high'};
       }
@@ -191,7 +203,9 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
         return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
       }
       if (config === 'disabled') {
-        return {thinking: {type: 'disabled'}};
+        return alwaysOn
+          ? {thinking: {type: 'enabled'}, reasoningEffort: 'low'}
+          : {thinking: {type: 'disabled'}};
       }
     } else {
       if (config === 'enabled') {
@@ -200,6 +214,11 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       if (config === 'disabled' && canDisable) {
         return {thinking: {type: 'disabled'}};
       }
+    }
+
+    // GLM-5.3+: always-on reasoning; default to deep reasoning (max) when unspecified.
+    if (alwaysOn) {
+      return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
     }
 
     return {};

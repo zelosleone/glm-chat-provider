@@ -43,6 +43,42 @@ function buildModelConfigurationSchema(thinkingSupport?: ThinkingSupport) {
     } as const;
   }
 
+  if (thinkingSupport === 'always-on-effort') {
+    return {
+      properties: {
+        thinkingMode: {
+          type: 'string',
+          title: 'Thinking',
+          enum: ['low', 'high', 'max'],
+          enumItemLabels: ['Low', 'High', 'Max'],
+          enumDescriptions: [
+            'Lightweight reasoning — fastest responses',
+            'Enhanced reasoning — balanced',
+            'Deep reasoning — best for complex tasks (default)',
+          ],
+          default: 'max',
+          group: 'navigation',
+        },
+        temperature: {
+          type: 'string',
+          title: 'Temperature',
+          enum: ['balanced', 'precise', 'creative', 'max', 'custom'],
+          enumItemLabels: ['Balanced', 'Precise', 'Creative', 'Max', 'Custom'],
+          enumDescriptions: [
+            'Standard (0.7)',
+            'Low, good for code (0.2)',
+            'Higher, good for writing (0.9)',
+            'Highest (1.0)',
+            'Custom value set in settings',
+          ],
+          default: 'balanced',
+          description: 'Presets (range: 0.0 – 1.0)',
+          group: 'navigation',
+        },
+      },
+    } as const;
+  }
+
   if (thinkingSupport === 'on-off-effort') {
     return {
       properties: {
@@ -137,7 +173,7 @@ export type ModelPickerChatInformation = vscode.LanguageModelChatInformation & {
   readonly configurationSchema?: ReturnType<typeof getModelConfigurationSchema>;
 };
 
-export type ThinkingSupport = 'on-off' | 'always-on' | 'on-off-effort';
+export type ThinkingSupport = 'on-off' | 'always-on' | 'on-off-effort' | 'always-on-effort';
 
 export interface GlmModelDefinition {
   id: string;
@@ -154,11 +190,34 @@ export interface GlmModelDefinition {
   };
   /** 'on-off': thinking can be enabled/disabled via API.
    *  'always-on': thinking is always active and cannot be disabled.
-   *  'on-off-effort': thinking can be enabled/disabled, with multiple effort levels (high/max). */
+   *  'on-off-effort': thinking can be enabled/disabled, with multiple effort levels (high/max).
+   *  'always-on-effort': thinking cannot be disabled; effort levels low/high/max (GLM-5.3+). */
   thinkingSupport: ThinkingSupport;
 }
 
 export const GLM_MODEL_DEFINITIONS: readonly GlmModelDefinition[] = [
+  {
+    id: 'glm-5.3',
+    name: 'GLM-5.3',
+    family: 'glm',
+    version: '5.3',
+    detail: 'Z.AI',
+    maxInputTokens: 1000000,
+    maxOutputTokens: 131072,
+    capabilities: {imageInput: false, toolCalling: true, thinking: true},
+    thinkingSupport: 'always-on-effort',
+  },
+  {
+    id: 'glm-5.3-flash',
+    name: 'GLM-5.3 Flash',
+    family: 'glm',
+    version: '5.3-flash',
+    detail: 'Z.AI',
+    maxInputTokens: 1000000,
+    maxOutputTokens: 131072,
+    capabilities: {imageInput: true, toolCalling: true, thinking: true},
+    thinkingSupport: 'always-on-effort',
+  },
   {
     id: 'glm-5.2',
     name: 'GLM-5.2',

@@ -6,6 +6,8 @@ Z.AI GLM models as a VS Code Language Model Chat Provider for the Coding Plan.
 
 | Model | Context | Output | Tool Calling |
 |---|---|---|---|
+| GLM-5.3 | 1M | 128K | Yes |
+| GLM-5.2 | 1M | 131K | Yes |
 | GLM-5.1 | 200K | 131K | Yes |
 | GLM-5 | 205K | 131K | Yes |
 | GLM-5-Turbo | 200K | 131K | Yes |
@@ -21,6 +23,7 @@ Z.AI GLM models as a VS Code Language Model Chat Provider for the Coding Plan.
 
 | Model | Context | Output | Image Input | Tool Calling |
 |---|---|---|---|---|
+| GLM-5.3-Flash | 1M | 128K | Yes (image/video) | Yes |
 | GLM-5V-Turbo | 200K | 131K | Yes | Yes |
 | GLM-4.6V | 128K | 33K | Yes | Yes |
 | GLM-4.5V | 64K | 16K | Yes | Yes |
@@ -30,7 +33,7 @@ Z.AI GLM models as a VS Code Language Model Chat Provider for the Coding Plan.
 - `GLM: Set API Key` -- Store your Z.AI API key in VS Code secrets
 - `GLM: Clear API Key` -- Remove the stored API key
 - `GLM: Manage Provider` -- Open provider management options
-- `GLM: Set Thinking Effort` -- Toggle thinking mode (Auto, Enabled, Disabled)
+- `GLM: Set Thinking Effort` -- Toggle thinking mode (Auto, Enabled, Low, High, Max, Disabled)
 
 ## Thinking Mode
 

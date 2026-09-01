@@ -49,6 +49,7 @@ export interface ChatOptions {
   stop?: string[];
   thinking?: Record<string, unknown>;
   reasoningEffort?: string;
+  toolStream?: boolean;
   onUsage?: (usage: {prompt_tokens: number; completion_tokens: number; total_tokens: number; cached_tokens?: number}) => void;
 }
 
@@ -169,6 +170,10 @@ export class GlmApiClient {
     if (options?.reasoningEffort) {
       (params as unknown as Record<string, unknown>).reasoning_effort =
         options.reasoningEffort;
+    }
+    if (options?.toolStream) {
+      // Z.AI-specific: stream tool calls progressively (recommended for GLM-5.3+)
+      (params as unknown as Record<string, unknown>).tool_stream = true;
     }
 
     const tools = this.toOpenAiTools(options?.tools);

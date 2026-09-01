@@ -17,7 +17,7 @@ import {
 } from '../models';
 export { GLM_MODELS };
 import { createThinkingPart } from './thinking';
-import { convertMessages, convertTools, parseToolArguments, type ToolCallBuilder } from './convert';
+import { convertMessages, convertTools, containsImageInput, parseToolArguments, type ToolCallBuilder } from './convert';
 import { getConfiguredTemperature } from './temperature';
 
 type ModelWithApiKey = vscode.LanguageModelChatInformation & {
@@ -128,6 +128,24 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       );
     }
 
+    // Reject image attachments early with an actionable message instead of
+    // letting the API fail with an opaque error on text-only models.
+    const modelDefinition = GLM_MODEL_DEFINITIONS.find(m => m.id === model.id);
+    if (
+      modelDefinition &&
+      !modelDefinition.capabilities.imageInput &&
+      containsImageInput(messages)
+    ) {
+      const visionModels = GLM_MODEL_DEFINITIONS.filter(
+        m => m.capabilities.imageInput,
+      )
+        .map(m => m.name)
+        .join(', ');
+      throw new Error(
+        `${modelDefinition.name} does not support image input. The conversation contains image attachments — switch to a vision model (${visionModels}) or remove the images.`,
+      );
+    }
+
     try {
       await this.streamResponse(
         new GlmApiClient(apiKey),
@@ -150,13 +168,20 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     const canDisable =
       def?.thinkingSupport === 'on-off' ||
       def?.thinkingSupport === 'on-off-effort';
-    const hasEffort = def?.thinkingSupport === 'on-off-effort';
+    const hasEffort =
+      def?.thinkingSupport === 'on-off-effort' ||
+      def?.thinkingSupport === 'always-on-effort';
+    // GLM-5.3+: reasoning cannot be disabled; only the effort level is configurable.
+    const alwaysOn = def?.thinkingSupport === 'always-on-effort';
 
     if (options) {
       const configuredMode =
         options.modelConfiguration?.thinkingMode ?? options.configuration?.thinkingMode;
 
       if (hasEffort) {
+        if (configuredMode === 'low') {
+          return {thinking: {type: 'enabled'}, reasoningEffort: 'low'};
+        }
         if (configuredMode === 'high') {
           return {thinking: {type: 'enabled'}, reasoningEffort: 'high'};
         }
@@ -164,7 +189,9 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
           return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
         }
         if (configuredMode === 'disabled') {
-          return {thinking: {type: 'disabled'}};
+          return alwaysOn
+            ? {thinking: {type: 'enabled'}, reasoningEffort: 'low'}
+            : {thinking: {type: 'disabled'}};
         }
       } else {
         if (configuredMode === 'enabled') {
@@ -184,6 +211,9 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       .get<string>('defaultThinkingMode', 'auto');
 
     if (hasEffort) {
+      if (config === 'low') {
+        return {thinking: {type: 'enabled'}, reasoningEffort: 'low'};
+      }
       if (config === 'high') {
         return {thinking: {type: 'enabled'}, reasoningEffort: 'high'};
       }
@@ -191,7 +221,9 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
         return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
       }
       if (config === 'disabled') {
-        return {thinking: {type: 'disabled'}};
+        return alwaysOn
+          ? {thinking: {type: 'enabled'}, reasoningEffort: 'low'}
+          : {thinking: {type: 'disabled'}};
       }
     } else {
       if (config === 'enabled') {
@@ -200,6 +232,11 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       if (config === 'disabled' && canDisable) {
         return {thinking: {type: 'disabled'}};
       }
+    }
+
+    // GLM-5.3+: always-on reasoning; default to deep reasoning (max) when unspecified.
+    if (alwaysOn) {
+      return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
     }
 
     return {};
@@ -216,7 +253,10 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     const toolCallBuilders = new Map<number, ToolCallBuilder>();
 
     const modelConfig = options as ModelConfigurationOptions;
-    const temperature = getConfiguredTemperature(modelConfig);
+    const modelDefinition = GLM_MODEL_DEFINITIONS.find(m => m.id === model.id);
+    const temperature =
+      getConfiguredTemperature(modelConfig) ??
+      modelDefinition?.recommendedTemperature;
     const {thinking, reasoningEffort} = this.resolveThinking(model.id, modelConfig);
 
     const stream = client.streamChat(
@@ -228,6 +268,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
         temperature,
         thinking,
         reasoningEffort,
+        toolStream: modelDefinition?.supportsToolStream ?? false,
         onUsage: this.onUsage,
       },
       token,

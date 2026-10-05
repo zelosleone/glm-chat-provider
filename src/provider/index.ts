@@ -10,7 +10,11 @@ import type { AuthManager } from '../auth';
 import {
   GLM_MODEL_DEFINITIONS,
   GLM_MODELS,
+  MODEL_CATALOG_CACHE_KEY,
+  fetchGlmModelCatalog,
   getModelConfigurationSchema,
+  mergeModelCatalog,
+  type GlmModelCatalogCache,
   type GlmModelDefinition,
   type ModelConfigurationOptions,
   type ModelPickerChatInformation,
@@ -53,9 +57,26 @@ function toChatInfo(m: GlmModelDefinition): ModelPickerChatInformation {
   };
 }
 
-const TYPED_MODELS: ModelPickerChatInformation[] = GLM_MODEL_DEFINITIONS.map(
-  m => toChatInfo(m),
-);
+const MODEL_CATALOG_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+
+function readCachedCatalog(
+  globalState?: vscode.Memento,
+): GlmModelDefinition[] | undefined {
+  if (!globalState) {
+    return undefined;
+  }
+  const cached = globalState.get<GlmModelCatalogCache>(
+    MODEL_CATALOG_CACHE_KEY,
+  );
+  if (!cached || !Array.isArray(cached.models)) {
+    return undefined;
+  }
+  const models = cached.models.filter(
+    (m): m is GlmModelDefinition =>
+      !!m && typeof m.id === 'string' && m.id.length > 0,
+  );
+  return models.length > 0 ? models : undefined;
+}
 
 export type UsageCallback = (usage: {
   prompt_tokens: number;
@@ -73,8 +94,92 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
 
   constructor(
     private readonly authManager: AuthManager,
-    private readonly onUsage?: UsageCallback,
-  ) { }
+    globalStateOrUsage?: vscode.Memento | UsageCallback,
+    onUsageMaybe?: UsageCallback,
+  ) {
+    if (typeof globalStateOrUsage === 'function') {
+      this.globalState = undefined;
+      this.onUsage = globalStateOrUsage;
+    } else {
+      this.globalState = globalStateOrUsage;
+      this.onUsage = onUsageMaybe;
+    }
+    this.availableModels =
+      readCachedCatalog(this.globalState) ?? [...GLM_MODEL_DEFINITIONS];
+    void this.refreshModels();
+    this.refreshTimer = setInterval(() => {
+      void this.refreshModels();
+    }, MODEL_CATALOG_REFRESH_INTERVAL_MS);
+    // Unref in Node so the interval never keeps a test process alive.
+    const timer = this.refreshTimer as unknown as {unref?: () => void};
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+  }
+
+  private readonly globalState?: vscode.Memento;
+  private readonly onUsage?: UsageCallback;
+  private availableModels: GlmModelDefinition[];
+  private refreshTimer?: ReturnType<typeof setInterval>;
+  private lastSeenApiKey?: string;
+  private disposed = false;
+
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = undefined;
+    }
+    this._onDidChangeLanguageModelChatInformation.dispose();
+  }
+
+  /**
+   * Re-fetch the live catalog, merge with known definitions, persist to
+   * globalState, and fire the change event only when the id list changed.
+   * No-op when no API key is available.
+   */
+  async refreshModels(apiKeyOverride?: string): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    const override = apiKeyOverride?.trim();
+    const stored = override
+      ? override
+      : (await this.authManager.getApiKey())?.trim();
+    if (!stored) {
+      return;
+    }
+    let live: GlmModelDefinition[];
+    try {
+      live = await fetchGlmModelCatalog(stored);
+    } catch {
+      return;
+    }
+    const merged = mergeModelCatalog(live);
+    if (merged.length === 0) {
+      return;
+    }
+    const before = this.availableModels.map(m => m.id).join('\n');
+    const after = merged.map(m => m.id).join('\n');
+    this.availableModels = merged;
+    await this.globalState?.update(MODEL_CATALOG_CACHE_KEY, {
+      savedAt: Date.now(),
+      models: merged,
+    } satisfies GlmModelCatalogCache);
+    if (before !== after) {
+      this.fireLanguageModelChatInformationChange();
+    }
+  }
+
+  private findModelDefinition(modelId: string): GlmModelDefinition | undefined {
+    return (
+      this.availableModels.find(m => m.id === modelId) ??
+      GLM_MODEL_DEFINITIONS.find(m => m.id === modelId)
+    );
+  }
 
   fireLanguageModelChatInformationChange(): void {
     this._onDidChangeLanguageModelChatInformation.fire();
@@ -97,14 +202,19 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       return [];
     }
 
+    if (apiKey !== this.lastSeenApiKey) {
+      this.lastSeenApiKey = apiKey;
+      void this.refreshModels(apiKey);
+    }
+
     return this.modelsWithApiKey(apiKey);
   }
 
   private modelsWithApiKey(
     apiKey: string,
   ): vscode.LanguageModelChatInformation[] {
-    return TYPED_MODELS.map(model => ({
-      ...model,
+    return this.availableModels.map(model => ({
+      ...toChatInfo(model),
       __glmApiKey: apiKey,
     })) as unknown as vscode.LanguageModelChatInformation[];
   }
@@ -146,7 +256,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     modelId: string,
     options?: ModelConfigurationOptions,
   ): {thinking?: Record<string, unknown>; reasoningEffort?: string} {
-    const def = GLM_MODEL_DEFINITIONS.find(m => m.id === modelId);
+    const def = this.findModelDefinition(modelId);
     const canDisable =
       def?.thinkingSupport === 'on-off' ||
       def?.thinkingSupport === 'on-off-effort';

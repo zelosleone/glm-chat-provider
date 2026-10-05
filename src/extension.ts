@@ -9,6 +9,7 @@ async function setApiKey(
   provider: GlmChatProvider,
 ): Promise<void> {
   await authManager.promptForApiKey();
+  void provider.refreshModels();
   provider.fireLanguageModelChatInformationChange();
 }
 
@@ -182,7 +183,11 @@ export function activate(context: vscode.ExtensionContext): void {
     usageStatusBarItem.show();
   };
 
-  const provider = new GlmChatProvider(authManager, onUsage);
+  const provider = new GlmChatProvider(
+    authManager,
+    context.globalState,
+    onUsage,
+  );
 
   const manageActions: Record<string, () => Promise<void>> = {
     'Set API Key': () => setApiKey(authManager, provider),
@@ -192,6 +197,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     usageStatusBarItem,
+    provider,
     vscode.lm.registerLanguageModelChatProvider('zai', provider),
     vscode.commands.registerCommand('glm-chat-provider.setApiKey', async () => {
       await setApiKey(authManager, provider);
@@ -227,6 +233,9 @@ export function activate(context: vscode.ExtensionContext): void {
         await setTemperature();
       },
     ),
+    context.secrets.onDidChange(() => {
+      void provider.refreshModels();
+    }),
   );
 }
 

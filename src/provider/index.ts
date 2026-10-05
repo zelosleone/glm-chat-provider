@@ -200,10 +200,11 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     if (this.disposed) {
       return;
     }
-    const override = apiKeyOverride?.trim();
-    const stored = override
-      ? override
-      : (await this.authManager.getApiKey())?.trim();
+    // Prefer the key VS Code hands us (requests use it), so timer refreshes work without a stored secret.
+    const stored =
+      apiKeyOverride?.trim() ||
+      this.lastSeenApiKey ||
+      (await this.authManager.getApiKey())?.trim();
     if (!stored) {
       return;
     }
@@ -265,9 +266,13 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       return [];
     }
 
-    if (apiKey !== this.lastSeenApiKey) {
+    if (apiKey !== this.lastSeenApiKey || this.servedInfos.length === 0) {
       this.lastSeenApiKey = apiKey;
-      void this.refreshModels(apiKey);
+      const refresh = this.refreshModels(apiKey);
+      // First run: no catalog yet, so wait instead of showing an empty picker.
+      if (this.servedInfos.length === 0) {
+        await refresh;
+      }
     }
 
     return this.modelsWithApiKey(apiKey);

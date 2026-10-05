@@ -1,28 +1,33 @@
 import * as vscode from 'vscode';
-import { match } from 'ts-pattern';
+import {match} from 'ts-pattern';
+import {GlmApiClient, GlmApiError} from '../api';
+import type {ChatCompletionChunk} from 'openai/resources/chat/completions/completions';
+import type {AuthManager} from '../auth';
 import {
-  GlmApiClient,
-  GlmApiError,
-  type GlmTool,
-} from '../api';
-import type { ChatCompletionChunk } from 'openai/resources/chat/completions/completions';
-import type { AuthManager } from '../auth';
-import {
-  GLM_MODEL_DEFINITIONS,
-  GLM_MODELS,
+  CHARS_PER_TOKEN_KEY,
   MODEL_CATALOG_CACHE_KEY,
-  fetchGlmModelCatalog,
-  getModelConfigurationSchema,
-  mergeModelCatalog,
-  type GlmModelCatalogCache,
-  type GlmModelDefinition,
+  buildServedModels,
+  fetchLiveModels,
+  resolveDevCache,
+  toChatInfo,
+  type GlmModelCatalogPersisted,
   type ModelConfigurationOptions,
   type ModelPickerChatInformation,
+  type ServedModel,
 } from '../models';
-export { GLM_MODELS };
-import { createThinkingPart } from './thinking';
-import { convertMessages, convertTools, parseToolArguments, type ToolCallBuilder } from './convert';
-import { getConfiguredTemperature } from './temperature';
+import {
+  reasoningRequestFields,
+  resolveReasoningChoice,
+  type ModelsDevCache,
+} from '../modelsDev';
+import {createThinkingPart} from './thinking';
+import {
+  convertMessages,
+  convertTools,
+  parseToolArguments,
+  type ToolCallBuilder,
+} from './convert';
+import {getConfiguredTemperature} from './temperature';
 
 type ModelWithApiKey = vscode.LanguageModelChatInformation & {
   __glmApiKey?: string;
@@ -36,46 +41,87 @@ type PrepareLanguageModelChatInfoOptions =
     };
   };
 
-function toChatInfo(m: GlmModelDefinition): ModelPickerChatInformation {
-  return {
-    id: m.id,
-    name: m.name,
-    family: m.family,
-    version: m.version,
-    detail: m.detail,
-    tooltip: 'Z.AI',
-    maxInputTokens: m.maxInputTokens,
-    maxOutputTokens: m.maxOutputTokens,
-    isUserSelectable: true,
-    capabilities: {
-      toolCalling: m.capabilities.toolCalling,
-      imageInput: m.capabilities.imageInput,
-    },
-    ...(m.capabilities.thinking
-      ? { configurationSchema: getModelConfigurationSchema(m.thinkingSupport) }
-      : {}),
-  };
-}
+type UsageDetails = NonNullable<ChatCompletionChunk['usage']>;
 
 const MODEL_CATALOG_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+const COPILOT_USAGE_DATA_PART_MIME = 'usage';
+
+/** Strip image payloads (data URLs / base64) before measuring text size. */
+function stripImageData(json: string): string {
+  return json.replace(/data:[^"'\\s]*;base64,[A-Za-z0-9+/=\s]+/g, '');
+}
+
+function requestCharsOf(messages: unknown, tools: unknown): number {
+  return stripImageData(JSON.stringify({messages, tools})).length;
+}
+
+function isValidServedModel(value: unknown): value is ServedModel {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const m = value as Record<string, unknown>;
+  return (
+    typeof m['id'] === 'string' &&
+    typeof m['name'] === 'string' &&
+    typeof m['context'] === 'number' &&
+    typeof m['output'] === 'number' &&
+    typeof m['imageInput'] === 'boolean' &&
+    typeof m['toolCalling'] === 'boolean'
+  );
+}
 
 function readCachedCatalog(
   globalState?: vscode.Memento,
-): GlmModelDefinition[] | undefined {
+): GlmModelCatalogPersisted | undefined {
   if (!globalState) {
     return undefined;
   }
-  const cached = globalState.get<GlmModelCatalogCache>(
-    MODEL_CATALOG_CACHE_KEY,
-  );
-  if (!cached || !Array.isArray(cached.models)) {
+  try {
+    const cached =
+      globalState.get<GlmModelCatalogPersisted>(MODEL_CATALOG_CACHE_KEY);
+    if (!cached || !Array.isArray(cached.models)) {
+      return undefined;
+    }
+    const models = cached.models.filter(isValidServedModel);
+    if (models.length === 0) {
+      return undefined;
+    }
+    const devCache =
+      cached.devCache &&
+      typeof cached.devCache === 'object' &&
+      cached.devCache.models &&
+      typeof cached.devCache.models === 'object'
+        ? (cached.devCache as ModelsDevCache)
+        : undefined;
+    return {devCache, models};
+  } catch {
     return undefined;
   }
-  const models = cached.models.filter(
-    (m): m is GlmModelDefinition =>
-      !!m && typeof m.id === 'string' && m.id.length > 0,
+}
+
+/**
+ * Copilot Chat reads token usage off a data part with this MIME to drive the
+ * context-window indicator. Without it the indicator never moves for a
+ * third-party provider.
+ */
+function reportCopilotUsage(
+  progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+  usage: UsageDetails,
+): void {
+  const data = {
+    prompt_tokens: usage.prompt_tokens,
+    completion_tokens: usage.completion_tokens,
+    total_tokens: usage.total_tokens,
+    prompt_tokens_details: {
+      cached_tokens: usage.prompt_tokens_details?.cached_tokens ?? 0,
+    },
+  };
+  progress.report(
+    new vscode.LanguageModelDataPart(
+      new TextEncoder().encode(JSON.stringify(data)),
+      COPILOT_USAGE_DATA_PART_MIME,
+    ),
   );
-  return models.length > 0 ? models : undefined;
 }
 
 export type UsageCallback = (usage: {
@@ -104,8 +150,13 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       this.globalState = globalStateOrUsage;
       this.onUsage = onUsageMaybe;
     }
-    this.availableModels =
-      readCachedCatalog(this.globalState) ?? [...GLM_MODEL_DEFINITIONS];
+    const cached = readCachedCatalog(this.globalState);
+    this.availableModels = cached?.models ?? [];
+    this.devCache = cached?.devCache;
+    this.servedInfos = this.availableModels.map(toChatInfo);
+    const storedCpt = this.globalState?.get<number>(CHARS_PER_TOKEN_KEY);
+    this.charsPerToken =
+      typeof storedCpt === 'number' && storedCpt > 0 ? storedCpt : 4;
     void this.refreshModels();
     this.refreshTimer = setInterval(() => {
       void this.refreshModels();
@@ -119,7 +170,10 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
 
   private readonly globalState?: vscode.Memento;
   private readonly onUsage?: UsageCallback;
-  private availableModels: GlmModelDefinition[];
+  private availableModels: ServedModel[];
+  private servedInfos: ModelPickerChatInformation[];
+  private devCache?: ModelsDevCache;
+  private charsPerToken: number;
   private refreshTimer?: ReturnType<typeof setInterval>;
   private lastSeenApiKey?: string;
   private disposed = false;
@@ -137,9 +191,10 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   }
 
   /**
-   * Re-fetch the live catalog, merge with known definitions, persist to
-   * globalState, and fire the change event only when the id list changed.
-   * No-op when no API key is available.
+   * Re-fetch the live id list, re-resolve models.dev metadata, persist, and
+   * fire the change event only when the served infos actually changed.
+   * No-op when no API key is available; keeps the previous catalog when
+   * either live source fails.
    */
   async refreshModels(apiKeyOverride?: string): Promise<void> {
     if (this.disposed) {
@@ -152,33 +207,41 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     if (!stored) {
       return;
     }
-    let live: GlmModelDefinition[];
+    let entries;
     try {
-      live = await fetchGlmModelCatalog(stored);
+      entries = await fetchLiveModels(stored);
     } catch {
       return;
     }
-    const merged = mergeModelCatalog(live);
-    if (merged.length === 0) {
+    let devCache: ModelsDevCache;
+    try {
+      devCache = await resolveDevCache(entries, this.devCache);
+    } catch {
+      // models.dev unreachable: keep serving the previous catalog.
       return;
     }
-    const before = this.availableModels.map(m => m.id).join('\n');
-    const after = merged.map(m => m.id).join('\n');
-    this.availableModels = merged;
-    await this.globalState?.update(MODEL_CATALOG_CACHE_KEY, {
-      savedAt: Date.now(),
-      models: merged,
-    } satisfies GlmModelCatalogCache);
-    if (before !== after) {
-      this.fireLanguageModelChatInformationChange();
+    const models = buildServedModels(entries, devCache);
+    if (models.length === 0) {
+      return;
     }
+    const nextInfos = models.map(toChatInfo);
+    const changed =
+      JSON.stringify(nextInfos) !== JSON.stringify(this.servedInfos);
+    this.devCache = devCache;
+    if (!changed) {
+      return;
+    }
+    this.availableModels = models;
+    this.servedInfos = nextInfos;
+    await this.globalState?.update(MODEL_CATALOG_CACHE_KEY, {
+      devCache,
+      models,
+    } satisfies GlmModelCatalogPersisted);
+    this.fireLanguageModelChatInformationChange();
   }
 
-  private findModelDefinition(modelId: string): GlmModelDefinition | undefined {
-    return (
-      this.availableModels.find(m => m.id === modelId) ??
-      GLM_MODEL_DEFINITIONS.find(m => m.id === modelId)
-    );
+  private findServedModel(modelId: string): ServedModel | undefined {
+    return this.availableModels.find(m => m.id === modelId);
   }
 
   fireLanguageModelChatInformationChange(): void {
@@ -213,10 +276,13 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   private modelsWithApiKey(
     apiKey: string,
   ): vscode.LanguageModelChatInformation[] {
-    return this.availableModels.map(model => ({
-      ...toChatInfo(model),
-      __glmApiKey: apiKey,
-    })) as unknown as vscode.LanguageModelChatInformation[];
+    return this.servedInfos.map(
+      model =>
+        ({
+          ...model,
+          __glmApiKey: apiKey,
+        }) as unknown as vscode.LanguageModelChatInformation,
+    );
   }
 
   async provideLanguageModelChatResponse(
@@ -252,69 +318,6 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     }
   }
 
-  private resolveThinking(
-    modelId: string,
-    options?: ModelConfigurationOptions,
-  ): {thinking?: Record<string, unknown>; reasoningEffort?: string} {
-    const def = this.findModelDefinition(modelId);
-    const canDisable =
-      def?.thinkingSupport === 'on-off' ||
-      def?.thinkingSupport === 'on-off-effort';
-    const hasEffort = def?.thinkingSupport === 'on-off-effort';
-
-    if (options) {
-      const configuredMode =
-        options.modelConfiguration?.thinkingMode ?? options.configuration?.thinkingMode;
-
-      if (hasEffort) {
-        if (configuredMode === 'high') {
-          return {thinking: {type: 'enabled'}, reasoningEffort: 'high'};
-        }
-        if (configuredMode === 'max') {
-          return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
-        }
-        if (configuredMode === 'disabled') {
-          return {thinking: {type: 'disabled'}};
-        }
-      } else {
-        if (configuredMode === 'enabled') {
-          // For GLM 5.1+/5/4.7 series, thinking is enabled by default.
-          // Sending clear_thinking alongside type: 'enabled' causes a validation
-          // error on newer models. Only send {type: 'enabled'} without extra fields.
-          return {thinking: {type: 'enabled'}};
-        }
-        if (configuredMode === 'disabled' && canDisable) {
-          return {thinking: {type: 'disabled'}};
-        }
-      }
-    }
-
-    const config = vscode.workspace
-      .getConfiguration('glm-chat-provider')
-      .get<string>('defaultThinkingMode', 'auto');
-
-    if (hasEffort) {
-      if (config === 'high') {
-        return {thinking: {type: 'enabled'}, reasoningEffort: 'high'};
-      }
-      if (config === 'max') {
-        return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
-      }
-      if (config === 'disabled') {
-        return {thinking: {type: 'disabled'}};
-      }
-    } else {
-      if (config === 'enabled') {
-        return {thinking: {type: 'enabled'}};
-      }
-      if (config === 'disabled' && canDisable) {
-        return {thinking: {type: 'disabled'}};
-      }
-    }
-
-    return {};
-  }
-
   private async streamResponse(
     client: GlmApiClient,
     model: vscode.LanguageModelChatInformation,
@@ -327,18 +330,37 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
 
     const modelConfig = options as ModelConfigurationOptions;
     const temperature = getConfiguredTemperature(modelConfig);
-    const {thinking, reasoningEffort} = this.resolveThinking(model.id, modelConfig);
+    const served = this.findServedModel(model.id);
+    const configured =
+      modelConfig.modelConfiguration?.reasoningEffort ??
+      modelConfig.configuration?.reasoningEffort;
+    const reasoningChoice = resolveReasoningChoice(
+      served?.choices,
+      configured,
+    );
+    const reasoningFields = reasoningRequestFields(reasoningChoice, 'enabled');
+
+    const glmMessages = convertMessages(messages);
+    const glmTools = convertTools(options.tools);
+    const requestChars = requestCharsOf(glmMessages, glmTools);
 
     const stream = client.streamChat(
       model.id,
-      convertMessages(messages),
+      glmMessages,
       {
         maxTokens: options.modelOptions?.maxTokens as number | undefined,
-        tools: convertTools(options.tools),
+        tools: glmTools,
         temperature,
-        thinking,
-        reasoningEffort,
-        onUsage: this.onUsage,
+        thinking: reasoningFields['thinking'] as
+          | Record<string, unknown>
+          | undefined,
+        reasoningEffort: reasoningFields['reasoning_effort'] as
+          | string
+          | undefined,
+        onUsage: usage => {
+          this.onUsage?.(usage);
+          this.calibrateCharsPerToken(requestChars, usage.prompt_tokens);
+        },
       },
       token,
     );
@@ -346,6 +368,10 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     for await (const chunk of stream) {
       if (token.isCancellationRequested) {
         return;
+      }
+
+      if (chunk.usage) {
+        reportCopilotUsage(progress, chunk.usage);
       }
 
       for (const choice of chunk.choices) {
@@ -360,13 +386,25 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     this.reportToolCalls(progress, toolCallBuilders);
   }
 
+  private calibrateCharsPerToken(
+    requestChars: number,
+    promptTokens: number,
+  ): void {
+    if (!requestChars || !promptTokens || promptTokens <= 0) {
+      return;
+    }
+    const ratio = Math.min(12, Math.max(1, requestChars / promptTokens));
+    this.charsPerToken = 0.7 * this.charsPerToken + 0.3 * ratio;
+    void this.globalState?.update(CHARS_PER_TOKEN_KEY, this.charsPerToken);
+  }
+
   private reportDelta(
     delta: ChatCompletionChunk.Choice.Delta,
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
   ): void {
     const deltaAny = delta as Record<string, unknown>;
 
-    const reasoningContent = deltaAny.reasoning_content;
+    const reasoningContent = deltaAny['reasoning_content'];
     if (typeof reasoningContent === 'string' && reasoningContent) {
       const thinkingPart = createThinkingPart(reasoningContent);
       if (thinkingPart) {
@@ -463,15 +501,15 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     void model;
     void token;
     if (typeof text === 'string') {
-      return Promise.resolve(Math.ceil(text.length / 4));
+      return Promise.resolve(
+        Math.max(1, Math.round(text.length / this.charsPerToken)),
+      );
     }
 
-    let totalChars = 0;
-    for (const part of text.content) {
-      if (part instanceof vscode.LanguageModelTextPart) {
-        totalChars += part.value.length;
-      }
-    }
-    return Promise.resolve(Math.ceil(totalChars / 4));
+    const converted = convertMessages([text]);
+    const chars = stripImageData(JSON.stringify(converted)).length;
+    return Promise.resolve(
+      Math.max(1, Math.round(chars / this.charsPerToken)),
+    );
   }
 }

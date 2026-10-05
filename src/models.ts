@@ -1,7 +1,15 @@
 import type * as vscode from 'vscode';
+import {BASE_URL} from './api';
+import {
+  reasoningChoices,
+  reasoningSchema,
+  resolveModelsDev,
+  tokenLimits,
+  type ModelsDevCache,
+  type ReasoningChoices,
+} from './modelsDev';
 
 export type TemperaturePreset = 'balanced' | 'precise' | 'creative' | 'max';
-export type ThinkingMode = 'auto' | 'enabled' | 'disabled' | 'high' | 'max';
 
 export const TEMPERATURE_PRESET_VALUES: Record<TemperaturePreset, number> = {
   balanced: 0.7,
@@ -10,381 +18,64 @@ export const TEMPERATURE_PRESET_VALUES: Record<TemperaturePreset, number> = {
   max: 1.0,
 };
 
-function buildModelConfigurationSchema(thinkingSupport?: ThinkingSupport) {
-  if (thinkingSupport === 'always-on') {
-    return {
-      properties: {
-        thinkingMode: {
-          type: 'string',
-          title: 'Thinking',
-          enum: ['enabled'],
-          enumItemLabels: ['Always On'],
-          enumDescriptions: ['Thinking is always active for this model'],
-          default: 'enabled',
-          group: 'navigation',
-        },
-        temperature: {
-          type: 'string',
-          title: 'Temperature',
-          enum: ['balanced', 'precise', 'creative', 'max', 'custom'],
-          enumItemLabels: ['Balanced', 'Precise', 'Creative', 'Max', 'Custom'],
-          enumDescriptions: [
-            'Standard (0.7)',
-            'Low, good for code (0.2)',
-            'Higher, good for writing (0.9)',
-            'Highest (1.0)',
-            'Custom value set in settings',
-          ],
-          default: 'balanced',
-          description: 'Presets (range: 0.0 – 1.0)',
-          group: 'navigation',
-        },
-      },
-    } as const;
-  }
+export type ModelConfigurationOptions =
+  vscode.ProvideLanguageModelChatResponseOptions & {
+    readonly modelConfiguration?: Record<string, unknown>;
+    readonly configuration?: Record<string, unknown>;
+  };
 
-  if (thinkingSupport === 'on-off-effort') {
-    return {
-      properties: {
-        thinkingMode: {
-          type: 'string',
-          title: 'Thinking',
-          enum: ['auto', 'high', 'max', 'disabled'],
-          enumItemLabels: ['Auto', 'High', 'Max', 'Disabled'],
-          enumDescriptions: [
-            'Let the model decide (default)',
-            'Enabled, high effort — faster responses',
-            'Enabled, max effort — best for complex tasks (recommended)',
-            'Disable chain-of-thought',
-          ],
-          default: 'auto',
-          group: 'navigation',
-        },
-        temperature: {
-          type: 'string',
-          title: 'Temperature',
-          enum: ['balanced', 'precise', 'creative', 'max', 'custom'],
-          enumItemLabels: ['Balanced', 'Precise', 'Creative', 'Max', 'Custom'],
-          enumDescriptions: [
-            'Standard (0.7)',
-            'Low, good for code (0.2)',
-            'Higher, good for writing (0.9)',
-            'Highest (1.0)',
-            'Custom value set in settings',
-          ],
-          default: 'balanced',
-          description: 'Presets (range: 0.0 – 1.0)',
-          group: 'navigation',
-        },
-      },
-    } as const;
-  }
+export type ModelPickerChatInformation =
+  vscode.LanguageModelChatInformation & {
+    readonly isUserSelectable: boolean;
+    readonly statusIcon?: vscode.ThemeIcon;
+    readonly detail?: string;
+    readonly tooltip?: string;
+    readonly configurationSchema?: object;
+  };
 
-  return {
-    properties: {
-      thinkingMode: {
-        type: 'string',
-        title: 'Thinking',
-        enum: ['auto', 'enabled', 'disabled'],
-        enumItemLabels: ['Auto', 'Enabled', 'Disabled'],
-        enumDescriptions: [
-          'Let the model decide (default)',
-          'Always enable chain-of-thought',
-          'Disable chain-of-thought',
-        ],
-        default: 'auto',
-        group: 'navigation',
-      },
-      temperature: {
-        type: 'string',
-        title: 'Temperature',
-        enum: ['balanced', 'precise', 'creative', 'max', 'custom'],
-        enumItemLabels: ['Balanced', 'Precise', 'Creative', 'Max', 'Custom'],
-        enumDescriptions: [
-          'Standard (0.7)',
-          'Low, good for code (0.2)',
-          'Higher, good for writing (0.9)',
-          'Highest (1.0)',
-          'Custom value set in settings',
-        ],
-        default: 'balanced',
-        description: 'Presets (range: 0.0 – 1.0)',
-        group: 'navigation',
-      },
-    },
-  } as const;
-}
-
-export const MODEL_CONFIGURATION_SCHEMA_BASE = buildModelConfigurationSchema('on-off');
-export const MODEL_CONFIGURATION_SCHEMA_EFFORT = buildModelConfigurationSchema('on-off-effort');
-
-export function getModelConfigurationSchema(
-  thinkingSupport?: ThinkingSupport,
-): typeof MODEL_CONFIGURATION_SCHEMA_BASE {
-  return buildModelConfigurationSchema(thinkingSupport);
-}
-
-export type ModelConfigurationOptions = vscode.ProvideLanguageModelChatResponseOptions & {
-  readonly modelConfiguration?: Record<string, unknown>;
-  readonly configuration?: Record<string, unknown>;
-};
-
-export type ModelPickerChatInformation = vscode.LanguageModelChatInformation & {
-  readonly isUserSelectable: boolean;
-  readonly statusIcon?: vscode.ThemeIcon;
-  readonly detail?: string;
-  readonly tooltip?: string;
-  readonly configurationSchema?: ReturnType<typeof getModelConfigurationSchema>;
-};
-
-export type ThinkingSupport = 'on-off' | 'always-on' | 'on-off-effort';
-
-export interface GlmModelDefinition {
+/**
+ * Live-only served model. Ids come from GET {baseUrl}/models; every other
+ * field comes from models.dev. Nothing here is hardcoded; this shape is what
+ * gets persisted in globalState. New ids appear automatically, removed ids
+ * disappear, and an id with no limits from either live source is skipped.
+ */
+export interface ServedModel {
   id: string;
   name: string;
-  family: string;
-  version: string;
-  detail: string;
-  maxInputTokens: number;
-  maxOutputTokens: number;
-  capabilities: {
-    toolCalling: boolean;
-    imageInput: boolean;
-    thinking: boolean;
-  };
-  /** 'on-off': thinking can be enabled/disabled via API.
-   *  'always-on': thinking is always active and cannot be disabled.
-   *  'on-off-effort': thinking can be enabled/disabled, with multiple effort levels (high/max). */
-  thinkingSupport: ThinkingSupport;
+  context: number;
+  output: number;
+  imageInput: boolean;
+  toolCalling: boolean;
+  choices?: ReasoningChoices;
 }
 
-export const GLM_MODEL_DEFINITIONS: readonly GlmModelDefinition[] = [
-  {
-    id: 'glm-5.2',
-    name: 'GLM-5.2',
-    family: 'glm',
-    version: '5.2',
-    detail: 'Z.AI',
-    maxInputTokens: 1000000,
-    maxOutputTokens: 131072,
-    capabilities: {imageInput: false, toolCalling: true, thinking: true},
-    thinkingSupport: 'on-off-effort',
-  },
-  {
-    id: 'glm-5.1',
-    name: 'GLM-5.1',
-    family: 'glm',
-    version: '5.1',
-    detail: 'Z.AI',
-    maxInputTokens: 204800,
-    maxOutputTokens: 131072,
-    capabilities: {imageInput: false, toolCalling: true, thinking: true},
-    thinkingSupport: 'on-off',
-  },
-  {
-    id: 'glm-5',
-    name: 'GLM-5',
-    family: 'glm',
-    version: '5',
-    detail: 'Z.AI',
-    maxInputTokens: 204800,
-    maxOutputTokens: 131072,
-    capabilities: {imageInput: false, toolCalling: true, thinking: true},
-    thinkingSupport: 'on-off',
-  },
-  {
-    id: 'glm-5-turbo',
-    name: 'GLM-5-Turbo',
-    family: 'glm',
-    version: '5-turbo',
-    detail: 'Z.AI',
-    maxInputTokens: 204800,
-    maxOutputTokens: 131072,
-    capabilities: {imageInput: false, toolCalling: true, thinking: true},
-    thinkingSupport: 'on-off',
-  },
-  {
-    id: 'glm-5v-turbo',
-    name: 'GLM-5V-Turbo',
-    family: 'glm',
-    version: '5v-turbo',
-    detail: 'Z.AI',
-    maxInputTokens: 204800,
-    maxOutputTokens: 131072,
-    capabilities: {imageInput: true, toolCalling: true, thinking: true},
-    thinkingSupport: 'on-off',
-  },
-  {
-    id: 'glm-4.7',
-    name: 'GLM-4.7',
-    family: 'glm',
-    version: '4.7',
-    detail: 'Z.AI',
-    maxInputTokens: 204800,
-    maxOutputTokens: 131072,
-    capabilities: {imageInput: false, toolCalling: true, thinking: true},
-    thinkingSupport: 'on-off',
-  },
-  {
-    id: 'glm-4.7-flash',
-    name: 'GLM-4.7 Flash',
-    family: 'glm',
-    version: '4.7-flash',
-    detail: 'Z.AI',
-    maxInputTokens: 204800,
-    maxOutputTokens: 131072,
-    capabilities: {imageInput: false, toolCalling: true, thinking: true},
-    thinkingSupport: 'on-off',
-  },
-  {
-    id: 'glm-4.7-flashx',
-    name: 'GLM-4.7 FlashX',
-    family: 'glm',
-    version: '4.7-flashx',
-    detail: 'Z.AI',
-    maxInputTokens: 204800,
-    maxOutputTokens: 131072,
-    capabilities: {imageInput: false, toolCalling: true, thinking: true},
-    thinkingSupport: 'on-off',
-  },
-  {
-    id: 'glm-4.6',
-    name: 'GLM-4.6',
-    family: 'glm',
-    version: '4.6',
-    detail: 'Z.AI',
-    maxInputTokens: 204800,
-    maxOutputTokens: 131072,
-    capabilities: {imageInput: false, toolCalling: true, thinking: true},
-    thinkingSupport: 'on-off',
-  },
-  {
-    id: 'glm-4.6v',
-    name: 'GLM-4.6V',
-    family: 'glm',
-    version: '4.6v',
-    detail: 'Z.AI',
-    maxInputTokens: 131072,
-    maxOutputTokens: 32768,
-    capabilities: {imageInput: true, toolCalling: true, thinking: true},
-    thinkingSupport: 'on-off',
-  },
-  {
-    id: 'glm-4.5',
-    name: 'GLM-4.5',
-    family: 'glm',
-    version: '4.5',
-    detail: 'Z.AI',
-    maxInputTokens: 131072,
-    maxOutputTokens: 98304,
-    capabilities: {imageInput: false, toolCalling: true, thinking: true},
-    thinkingSupport: 'always-on',
-  },
-  {
-    id: 'glm-4.5-flash',
-    name: 'GLM-4.5 Flash',
-    family: 'glm',
-    version: '4.5-flash',
-    detail: 'Z.AI',
-    maxInputTokens: 131072,
-    maxOutputTokens: 98304,
-    capabilities: {imageInput: false, toolCalling: true, thinking: true},
-    thinkingSupport: 'always-on',
-  },
-  {
-    id: 'glm-4.5-air',
-    name: 'GLM-4.5 Air',
-    family: 'glm',
-    version: '4.5-air',
-    detail: 'Z.AI',
-    maxInputTokens: 131072,
-    maxOutputTokens: 98304,
-    capabilities: {imageInput: false, toolCalling: true, thinking: true},
-    thinkingSupport: 'always-on',
-  },
-  {
-    id: 'glm-4.5v',
-    name: 'GLM-4.5V',
-    family: 'glm',
-    version: '4.5v',
-    detail: 'Z.AI',
-    maxInputTokens: 64000,
-    maxOutputTokens: 16384,
-    capabilities: {imageInput: true, toolCalling: true, thinking: true},
-    thinkingSupport: 'always-on',
-  },
-];
+export const MODEL_CATALOG_CACHE_KEY = 'glm.modelCatalog.v2';
+export const CHARS_PER_TOKEN_KEY = 'glm.charsPerToken';
 
-export const GLM_MODELS_API_URL =
-  'https://api.z.ai/api/coding/paas/v4/models';
+export interface GlmModelCatalogPersisted {
+  devCache?: ModelsDevCache;
+  models: ServedModel[];
+}
 
-export const MODEL_CATALOG_CACHE_KEY = 'glm.modelCatalog.v1';
-
-export interface GlmModelCatalogCache {
-  savedAt: number;
-  models: GlmModelDefinition[];
+export interface LiveModelEntry {
+  id: string;
+  name?: string;
 }
 
 const NON_CHAT_MODEL_PATTERN = /embed|rerank|moderation|tts|whisper/i;
 
-/** Turn a raw model id (e.g. `glm-4.6v`, `glm-5-turbo`) into a display name. */
-export function humanizeModelId(id: string): string {
-  const words = id
-    .replace(/[-_]+/g, ' ')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map(word => {
-      if (/^glm$/i.test(word)) {
-        return 'GLM';
-      }
-      // Uppercase a trailing vision shorthand after a digit: `4.6v` -> `4.6V`.
-      const withVision = word.replace(/(\d)v$/i, '$1V');
-      return withVision.charAt(0).toUpperCase() + withVision.slice(1);
-    });
-  return words.join(' ') || id;
-}
-
-/** Build a definition for an id with no hardcoded entry. */
-export function inferModelDefinition(id: string): GlmModelDefinition {
-  return {
-    id,
-    name: humanizeModelId(id),
-    family: 'glm',
-    version: id.startsWith('glm-') ? id.slice('glm-'.length) : id,
-    detail: 'Z.AI GLM',
-    maxInputTokens: 131072,
-    maxOutputTokens: 32768,
-    capabilities: {
-      toolCalling: true,
-      imageInput: /\dv(-|$)/.test(id) || /vision|image/i.test(id),
-      thinking: true,
-    },
-    thinkingSupport: 'on-off',
-  };
-}
-
-/** Resolve one model id: known entry wins, otherwise infer defaults. */
-export function resolveModelDefinition(id: string): GlmModelDefinition {
-  return (
-    GLM_MODEL_DEFINITIONS.find(entry => entry.id === id) ??
-    inferModelDefinition(id)
-  );
-}
-
 interface OpenAiModelListResponse {
-  data?: Array<{id?: unknown}>;
+  data?: Array<{id?: unknown; name?: unknown}>;
 }
 
 /**
- * Fetch the live model list from the Z.AI coding endpoint and resolve each
- * id against the known definitions. Non-chat models (embeddings, rerank,
- * moderation, TTS, Whisper) are dropped.
+ * Live model entries from the Z.AI coding endpoint. In practice this
+ * endpoint returns ids only, so all metadata is resolved via models.dev.
  */
-export async function fetchGlmModelCatalog(
+export async function fetchLiveModels(
   apiKey: string,
-): Promise<GlmModelDefinition[]> {
-  const response = await fetch(GLM_MODELS_API_URL, {
+): Promise<LiveModelEntry[]> {
+  const response = await fetch(`${BASE_URL}/models`, {
     headers: {Authorization: `Bearer ${apiKey}`},
   });
   if (!response.ok) {
@@ -393,39 +84,133 @@ export async function fetchGlmModelCatalog(
     );
   }
   const body = (await response.json()) as OpenAiModelListResponse;
-  const ids = Array.isArray(body?.data)
-    ? body.data
-        .map(entry => (typeof entry?.id === 'string' ? entry.id : undefined))
-        .filter((id): id is string => typeof id === 'string' && id.length > 0)
-    : [];
-  return ids
-    .filter(id => !NON_CHAT_MODEL_PATTERN.test(id))
-    .map(id => resolveModelDefinition(id));
+  const entries = Array.isArray(body?.data) ? body.data : [];
+  const live: LiveModelEntry[] = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry.id !== 'string' || entry.id.length === 0) {
+      continue;
+    }
+    if (NON_CHAT_MODEL_PATTERN.test(entry.id)) {
+      continue;
+    }
+    live.push(
+      typeof entry.name === 'string' && entry.name.length > 0
+        ? {id: entry.id, name: entry.name}
+        : {id: entry.id},
+    );
+  }
+  return live;
 }
 
 /**
- * Merge live models with the known table so hardcoded entries survive even
- * when the API omits them. Live order wins; missing known ids are appended.
+ * Metadata for the given live ids. Throws on network errors so callers keep
+ * their previous catalog instead of inventing data.
  */
-export function mergeModelCatalog(
-  live: readonly GlmModelDefinition[],
-): GlmModelDefinition[] {
-  const seen = new Set(live.map(m => m.id));
-  const missing = GLM_MODEL_DEFINITIONS.filter(m => !seen.has(m.id));
-  return [...live, ...missing];
+export function resolveDevCache(
+  entries: readonly LiveModelEntry[],
+  previous?: ModelsDevCache,
+): Promise<ModelsDevCache> {
+  return resolveModelsDev(
+    BASE_URL,
+    entries.map(entry => entry.id),
+    previous,
+  );
 }
 
-export const GLM_MODELS: vscode.LanguageModelChatInformation[] = GLM_MODEL_DEFINITIONS.map(
-  (m) =>
-    ({
-      id: m.id,
-      name: m.name,
-      family: m.family,
-      version: m.version,
-      tooltip: 'Z.AI',
-      detail: 'Z.AI',
-      maxInputTokens: m.maxInputTokens,
-      maxOutputTokens: m.maxOutputTokens,
-      capabilities: {imageInput: m.capabilities.imageInput, toolCalling: m.capabilities.toolCalling},
-    }) as vscode.LanguageModelChatInformation,
-);
+/**
+ * Join live ids with models.dev metadata. A live id with no context or
+ * output limit from either source is skipped (and logged), never invented.
+ * Name: provider-own name ?? models.dev name ?? id.
+ */
+export function buildServedModels(
+  entries: readonly LiveModelEntry[],
+  devCache: ModelsDevCache,
+): ServedModel[] {
+  const models: ServedModel[] = [];
+  for (const entry of entries) {
+    const dev = devCache.models[entry.id];
+    const context = dev?.limit?.context;
+    const output = dev?.limit?.output;
+    if (typeof context !== 'number' || typeof output !== 'number') {
+      console.warn(
+        `[glm-chat-provider] Skipping model '${entry.id}': no context/output limits from live sources.`,
+      );
+      continue;
+    }
+    const inputModalities = dev?.modalities?.input ?? [];
+    const choices = reasoningChoices(dev?.reasoning_options, undefined);
+    models.push({
+      id: entry.id,
+      name: entry.name ?? dev?.name ?? entry.id,
+      context,
+      output,
+      imageInput: inputModalities.includes('image'),
+      toolCalling: dev?.tool_call !== false,
+      ...(choices ? {choices} : {}),
+    });
+  }
+  return models;
+}
+
+const TEMPERATURE_SCHEMA_PROPERTY = {
+  type: 'string',
+  title: 'Temperature',
+  enum: ['balanced', 'precise', 'creative', 'max', 'custom'],
+  enumItemLabels: ['Balanced', 'Precise', 'Creative', 'Max', 'Custom'],
+  enumDescriptions: [
+    'Standard (0.7)',
+    'Low, good for code (0.2)',
+    'Higher, good for writing (0.9)',
+    'Highest (1.0)',
+    'Custom value set in settings',
+  ],
+  default: 'balanced',
+  description: 'Presets (range: 0.0 – 1.0)',
+  group: 'navigation',
+} as const;
+
+function buildConfigurationSchema(
+  choices: ReasoningChoices | undefined,
+): object {
+  if (choices) {
+    const base = reasoningSchema(choices) as {
+      properties: Record<string, unknown>;
+    };
+    return {
+      properties: {
+        ...base.properties,
+        temperature: TEMPERATURE_SCHEMA_PROPERTY,
+      },
+    };
+  }
+  return {
+    properties: {
+      temperature: TEMPERATURE_SCHEMA_PROPERTY,
+    },
+  };
+}
+
+/**
+ * Copilot's own BYOK convention: the prompt budget is the window minus the
+ * output reservation. Capabilities come from live models.dev data. The cast
+ * covers proposed fields (isBYOK, maxContextWindowTokens) the same way the
+ * repo already cast them.
+ */
+export function toChatInfo(m: ServedModel): ModelPickerChatInformation {
+  return {
+    id: m.id,
+    name: m.name,
+    family: 'glm',
+    version: m.id.startsWith('glm-') ? m.id.slice('glm-'.length) : m.id,
+    detail: 'Z.AI',
+    tooltip: 'Z.AI',
+    ...tokenLimits(m.context, m.output),
+    isBYOK: true,
+    isUserSelectable: true,
+    capabilities: {
+      toolCalling: m.toolCalling,
+      imageInput: m.imageInput,
+    },
+    configurationSchema: buildConfigurationSchema(m.choices),
+  } as ModelPickerChatInformation;
+}

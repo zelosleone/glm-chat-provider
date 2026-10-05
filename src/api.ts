@@ -9,7 +9,7 @@ import type {
   ChatCompletionTool,
 } from 'openai/resources/chat/completions/completions';
 
-const BASE_URL = 'https://api.z.ai/api/coding/paas/v4';
+export const BASE_URL = 'https://api.z.ai/api/coding/paas/v4';
 
 export type GlmContentPart =
   | {type: 'text'; text: string}

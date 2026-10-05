@@ -60,57 +60,6 @@ async function testConnection(
   }
 }
 
-async function setThinkingEffort(): Promise<void> {
-  const config = vscode.workspace.getConfiguration('glm-chat-provider');
-  const current = config.get<string>('defaultThinkingMode', 'auto');
-
-  const items = [
-    {
-      label: 'Auto',
-      description: 'Let the model decide when to think',
-      value: 'auto',
-      picked: current === 'auto',
-    },
-    {
-      label: 'Enabled',
-      description: 'Always enable thinking mode',
-      value: 'enabled',
-      picked: current === 'enabled',
-    },
-    {
-      label: 'High',
-      description: 'Thinking enabled, high effort (GLM-5.2+)',
-      value: 'high',
-      picked: current === 'high',
-    },
-    {
-      label: 'Max',
-      description: 'Thinking enabled, max effort (GLM-5.2+)',
-      value: 'max',
-      picked: current === 'max',
-    },
-    {
-      label: 'Disabled',
-      description: 'Always disable thinking mode',
-      value: 'disabled',
-      picked: current === 'disabled',
-    },
-  ];
-
-  const choice = await vscode.window.showQuickPick(items, {
-    placeHolder: 'Select thinking effort for GLM models',
-  });
-
-  if (!choice) {
-    return;
-  }
-
-  await config.update('defaultThinkingMode', choice.value, true);
-  vscode.window.showInformationMessage(
-    `GLM thinking effort set to ${choice.label}`,
-  );
-}
-
 async function setTemperature(): Promise<void> {
   const presets = [
     {key: 'balanced', label: 'Balanced', value: 0.7, description: 'Default for most tasks'},
@@ -221,12 +170,6 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       await action();
     }),
-    vscode.commands.registerCommand(
-      'glm-chat-provider.setThinkingEffort',
-      async () => {
-        await setThinkingEffort();
-      },
-    ),
     vscode.commands.registerCommand(
       'glm-chat-provider.setTemperature',
       async () => {

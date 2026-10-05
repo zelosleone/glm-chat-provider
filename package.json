@@ -2,7 +2,7 @@
   "name": "glm-chat-provider",
   "displayName": "GLM Chat Provider",
   "description": "Z.AI GLM models as VS Code Language Model Chat Provider",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "publisher": "DenizhanDaklr",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -56,21 +56,6 @@
     "configuration": {
       "title": "GLM Chat Provider",
       "properties": {
-        "glm-chat-provider.defaultThinkingMode": {
-          "type": "string",
-          "default": "auto",
-          "enum": [
-            "auto",
-            "enabled",
-            "disabled"
-          ],
-          "enumDescriptions": [
-            "Let the model decide when to think (default behavior)",
-            "Always enable thinking mode",
-            "Always disable thinking mode"
-          ],
-          "description": "Default thinking mode for GLM models that support it (GLM-4.5+)"
-        },
         "glm-chat-provider.temperature": {
           "type": "number",
           "default": 0.7,
@@ -93,10 +78,6 @@
       {
         "command": "glm-chat-provider.manage",
         "title": "GLM: Manage Provider"
-      },
-      {
-        "command": "glm-chat-provider.setThinkingEffort",
-        "title": "GLM: Set Thinking Effort"
       },
       {
         "command": "glm-chat-provider.setTemperature",

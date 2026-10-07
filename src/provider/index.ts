@@ -241,6 +241,11 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     this.fireLanguageModelChatInformationChange();
   }
 
+  /** First currently served model id, for connection tests that must not hardcode a model. */
+  firstServedModelId(): string | undefined {
+    return this.availableModels[0]?.id;
+  }
+
   private findServedModel(modelId: string): ServedModel | undefined {
     return this.availableModels.find(m => m.id === modelId);
   }

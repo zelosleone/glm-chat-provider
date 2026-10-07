@@ -39,8 +39,15 @@ async function testConnection(
   }
 
   const client = new GlmApiClient(key);
+  const modelId = provider.firstServedModelId();
+  if (!modelId) {
+    vscode.window.showErrorMessage(
+      'GLM provider test failed: no models served yet. Wait for the model list to refresh, then run this test again.',
+    );
+    return;
+  }
   try {
-    await client.chat('glm-4.7', [{role: 'user', content: 'Ping'}], {
+    await client.chat(modelId, [{role: 'user', content: 'Ping'}], {
       maxTokens: 1,
     });
     vscode.window.showInformationMessage('GLM provider test succeeded.');

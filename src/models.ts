@@ -37,7 +37,8 @@ export type ModelPickerChatInformation =
  * Live-only served model. Ids come from GET {baseUrl}/models; every other
  * field comes from models.dev. Nothing here is hardcoded; this shape is what
  * gets persisted in globalState. New ids appear automatically, removed ids
- * disappear, and an id with no limits from either live source is skipped.
+ * disappear, and an id models.dev doesn't know yet is served with safe
+ * default limits until models.dev lists it.
  */
 export interface ServedModel {
   id: string;
@@ -118,8 +119,8 @@ export function resolveDevCache(
 }
 
 /**
- * Join live ids with models.dev metadata. A live id with no context or
- * output limit from either source is skipped (and logged), never invented.
+ * Join live ids with models.dev metadata. A live id models.dev doesn't know yet still
+ * shows up with safe default limits, corrected on the next refresh once models.dev lists it.
  * Name: provider-own name ?? models.dev name ?? id.
  */
 export function buildServedModels(
@@ -127,14 +128,22 @@ export function buildServedModels(
   devCache: ModelsDevCache,
 ): ServedModel[] {
   const models: ServedModel[] = [];
+  const defaulted: string[] = [];
   for (const entry of entries) {
     const dev = devCache.models[entry.id];
-    const context = dev?.limit?.context;
-    const output = dev?.limit?.output;
-    if (typeof context !== 'number' || typeof output !== 'number') {
-      console.warn(
-        `[glm-chat-provider] Skipping model '${entry.id}': no context/output limits from live sources.`,
-      );
+    const knownContext = dev?.limit?.context;
+    const knownOutput = dev?.limit?.output;
+    if (typeof knownContext !== 'number' || typeof knownOutput !== 'number') {
+      // A model the vendor lists before models.dev catalogs it still shows up, with safe limits, corrected on the next refresh once models.dev knows it.
+      defaulted.push(entry.id);
+      models.push({
+        id: entry.id,
+        name: entry.name ?? dev?.name ?? entry.id,
+        context: 131072,
+        output: 32768,
+        imageInput: false,
+        toolCalling: true,
+      });
       continue;
     }
     const inputModalities = dev?.modalities?.input ?? [];
@@ -142,12 +151,17 @@ export function buildServedModels(
     models.push({
       id: entry.id,
       name: entry.name ?? dev?.name ?? entry.id,
-      context,
-      output,
+      context: knownContext,
+      output: knownOutput,
       imageInput: inputModalities.includes('image'),
       toolCalling: dev?.tool_call !== false,
       ...(choices ? {choices} : {}),
     });
+  }
+  if (defaulted.length > 0) {
+    console.info(
+      `[glm-chat-provider] Using safe default limits for models not yet in models.dev: ${defaulted.join(', ')}.`,
+    );
   }
   return models;
 }

@@ -6,7 +6,7 @@ Use Z.AI GLM models from your GLM Coding Plan in GitHub Copilot Chat.
 2. Pick a GLM model in the model picker.
 3. Set reasoning effort and temperature right in the picker.
 
-The model list comes live from the Coding Plan API, and context windows, image support and effort levels come from [models.dev](https://models.dev), so new GLM models show up without an update. Copilot's context window indicator works as usual.
+The model list comes live from the Coding Plan API, and context windows, image support and effort levels come from [models.dev](https://models.dev), so new GLM models show up without an update. Brand-new models appear right away with safe default limits until models.dev lists them. Copilot's context window indicator works as usual.
 
 ## Model picker
 

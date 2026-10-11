@@ -2,6 +2,8 @@
 
 Use Z.AI GLM models from your GLM Coding Plan in GitHub Copilot Chat.
 
+> Also from the same developer: [Lodestar](https://marketplace.visualstudio.com/items?itemName=DenizhanDaklr.lodestar) walks you through how code works and reviews your changes, on any model in VS Code, including this extension's. $10, one time.
+
 1. In the Copilot Chat model picker, open **Manage Models**, pick **Z.AI GLM** and paste your API key from [z.ai](https://z.ai).
 2. Pick a GLM model in the model picker.
 3. Set reasoning effort and temperature right in the picker.

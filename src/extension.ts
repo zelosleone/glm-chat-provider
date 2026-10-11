@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import {match} from 'ts-pattern';
 import {GlmApiClient, GlmApiError} from './api';
 import {AuthManager} from './auth';
+import {scheduleLodestarNotice} from './lodestar';
 import {GlmChatProvider, type UsageCallback} from './provider';
 
 async function setApiKey(
@@ -187,6 +188,7 @@ export function activate(context: vscode.ExtensionContext): void {
       void provider.refreshModels();
     }),
   );
+  scheduleLodestarNotice(context);
 }
 
 export function deactivate(): void {}

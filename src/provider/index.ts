@@ -211,17 +211,20 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     let entries;
     try {
       entries = await fetchLiveModels(stored);
-    } catch {
+    } catch (error) {
+      console.warn(`[glm-chat-provider] Model list not refreshed: ${String(error)}`);
       return;
     }
     let devCache: ModelsDevCache;
     try {
       devCache = await resolveDevCache(entries, this.devCache);
-    } catch {
+    } catch (error) {
       // models.dev unreachable: keep serving the previous catalog.
+      console.warn(`[glm-chat-provider] models.dev not reached, model list kept: ${String(error)}`);
       return;
     }
-    const models = buildServedModels(entries, devCache);
+    // Newer models Z.ai serves before its /models lists them come first, as the newest.
+    const models = buildServedModels([...(devCache.extra ?? []).map(id => ({id})), ...entries], devCache);
     if (models.length === 0) {
       return;
     }
